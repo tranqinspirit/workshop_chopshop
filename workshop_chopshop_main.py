@@ -1,4 +1,5 @@
 import os, re, configparser
+from requests_html import HTMLSession
 
 # DEBUG #
 DEBUG_CONFIG = True
@@ -6,9 +7,10 @@ DEBUG_CONFIG_CREATE = True
 DEBUG_CONFIG_WRITE = False
 DEBUG_GAMEFILE_READING = False
 DEBUG_MAIN_GAMELIST = False
-DEBUG_MODLIST_CREATE = True
-DEBUG_MODLIST_CREATE_OUTPUT = True
-DEBUG_EXEMPTION_BUILD = True
+DEBUG_MODLIST_CREATE = False
+DEBUG_MODLIST_CREATE_OUTPUT = False
+DEBUG_EXEMPTION_BUILD = False
+DEBUG_MODTITLE_BUILD = False
 #########
 
 def cleanFileName(fileName):
@@ -17,16 +19,36 @@ def cleanFileName(fileName):
     
     return cleanedName;
 
+
 def buildExemptionList(GameLocation):
     ModLocation = os.path.join(GameLocation, 'workshop')
+    GameFileList = []
     ExemptionList = []
+    
+    #some presets
+    #PresetExemptions = [228980]  
+    #ExemptionList.extend(PresetExemptions)
+    
+    for file in os.listdir(GameLocation):
+        if file.endswith('.acf'):
+            file = file.replace("manifest","workshop")
+            GameFileList.append(file)
+        
     # iterate through mod directory -> if not found in game directory, add to exemptions
     for fileName in os.listdir(ModLocation):
-        if fileName.endswith('.acf') and fileName not in os.listdir(GameLocation):
+        if fileName.endswith('.acf'):
             if DEBUG_EXEMPTION_BUILD:
-                print("EXEMPTION ITEM: " + str(fileName))
-            ExemptionList.append(cleanFileName(fileName))
-    
+                print(fileName + " found in workshop directory")
+           
+            if (fileName not in GameFileList):
+                if DEBUG_EXEMPTION_BUILD:
+                    print("EXEMPTION ITEM (pre): " + str(fileName) + "\n")
+                fileName = fileName.replace("appworkshop_","")
+                fileName = fileName.replace(".acf", "")
+                if DEBUG_EXEMPTION_BUILD:
+                    print("EXEMPTION ITEM (post): " + str(fileName))    
+                ExemptionList.append(cleanFileName(fileName))
+                
     return ExemptionList;
 
 def getGameIDs(GameLocation, GameList, GameExemptionList):
@@ -72,14 +94,26 @@ def getGameIDs2(GameLocation, GameList, GameExemptionList):
                                 break;
     return;
 
+def getModTitleFromInternet(modURL):
+    
+    #Get the title of the page to use for the key in the config sections
+    session = HTMLSession()
+    webResponse = session.get(modURL)
+    modTitle = webResponse.html.find('title', first=True)
+    foundTitle = str(modTitle.html)
+    foundTitle = re.sub(r'.*:',"", foundTitle)
+    foundTitle = foundTitle.replace("</title>", "")
+    if DEBUG_MODTITLE_BUILD:
+        print("Mod Title: " + foundTitle)
 
+    return foundTitle;
 
 def getModList(GameLocation, workshopFile, GameExemptionList):
     ModLocation = os.path.join(GameLocation, 'workshop')
     modList = []
-    NewGameList = {}
     for fileName in os.listdir(ModLocation):
-        if fileName.endswith('.acf') and (int(cleanFileName(fileName)) not in GameExemptionList):
+        cleaned_filename = (cleanFileName(fileName))
+        if fileName.endswith('.acf') and (cleaned_filename not in GameExemptionList):
             with open(os.path.join(ModLocation,fileName,), "r", encoding='utf-8', errors='ignore') as modFile:
                 if DEBUG_MODLIST_CREATE:
                     print("File: " + cleanFileName(fileName) + " opened")
@@ -100,28 +134,25 @@ def getModList(GameLocation, workshopFile, GameExemptionList):
                         modID = modID.replace("\"", "")
                         modID = "".join(modID.split())
                         modList.append(modID)
-                        if modList:                      
-                            NewGameList.update({cleanFileName(fileName) : modList})
-                if DEBUG_MODLIST_CREATE_OUTPUT:
-                    if modList:
+
+                if modList:
+                    mod_key = 1
+                    if DEBUG_MODLIST_CREATE_OUTPUT:
                         print("Mod List: "), print(modList)
-                        #what if instead, we just directly wrote to the config file?
-                        for item in modList:                  
-                            workshopFile.set(cleanFileName(fileName), 'Mods', item)
-                        print("WorkshopFile key debug (post): "), print(workshopFile[cleanFileName(fileName)])           
-                    #print("PRE-FILE CLOSE CHECK2: " + cleanFileName(fileName))#, print(NewGameList[cleanFileName(fileName)])
-    #print(list(NewGameList))    
-    #for key in NewGameList.items():
-    #    print("KEYS: "), print(key)           
+                    #what if instead, we just directly wrote to the config file?
+                    for item in modList:                  
+                        webURL = "https://steamcommunity.com/sharedfiles/filedetails/?id=" + item 
+                        mod_title = getModTitleFromInternet(webURL)
+                        workshopFile[cleanFileName(fileName)][mod_title] = webURL
+                        mod_key += 1       
 
     return;
-
 
 def main():
     
     SteamLocation = os.chdir('C:\\Program Files (x86)\\Steam')
     GameLocation = os.path.join(os.getcwd(), 'steamapps')
-    GameExemptionList = []#{-1, 228980}
+    GameExemptionList = []
     
     GameList = {}
     
@@ -163,7 +194,7 @@ def main():
             #workshop_config[GameList[x] + " - " + x] = {} - puts name with appid
             
             # set it this way initially so it's easier to deal with in terms of loading in the mod lists..
-            # delete the key/rename the section and stuff after
+            # delete the key/rename the section and stuff after?
             workshop_config[x] = {}
             workshop_config[x]['Title'] = GameList[x]
         
